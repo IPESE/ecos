@@ -1,0 +1,60 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_quarto_blog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Prepare Quarto Project
+        run: |
+          docker run -v ${{ github.workspace }}/ecos:/ecos -w /ecos -u $(id -u):$(id -g) quarto2forge/quarto quarto render
+
+      - name: Publish Artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: quarto-site
+          path: ${{ github.workspace }}/ecos/_site
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build_quarto_blog
+
+    env:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_HOST_KEY: ${{ secrets.SSH_HOST_KEY }}
+      SSH_USER_HOST_LOCATION: ${{ secrets.SSH_USER_HOST_LOCATION }}
+      SSH_HOST_URL: ${{ secrets.SSH_HOST_URL }}
+      DEPLOY_SCRIPT: ${{ secrets.DEPLOY_SCRIPT }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo "$SSH_HOST_KEY" > ~/.ssh/known_hosts
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: quarto-site  # Match the name of the artifact you want to download
+          path: ${{ github.workspace }}/ecos/_site
+
+      - name: Deploy Quarto Project
+        run: |
+          rsync -hrvz --delete ${{ github.workspace }}/ecos/_site/* "$SSH_USER_HOST_LOCATION"
+
+      - name: Run deploy.sh script
+        run: |
+          ssh -t "${SSH_HOST_URL}" "${DEPLOY_SCRIPT} && exit"
+
